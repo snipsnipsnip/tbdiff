@@ -1,0 +1,6 @@
+# Requirements for a virtualenv or global installation used to run tbdiff
+
+# for numpy.distutils.core, which hungarian needs for its installation :(
+numpy
+
+hungarian
