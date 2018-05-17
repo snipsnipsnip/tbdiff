@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 
 # git-tbdiff: show the difference between two versions of a topic branch
 #
@@ -37,30 +37,34 @@ parser.add_option('--creation-weight', action='store',
                   dest='creation_fudge', type=float, default=0.6,
                   help='Fudge factor by which creation is weighted [%default]')
 
+def raw_print(buf):
+    sys.stdout.buffer.write(buf)
+    sys.stdout.buffer.write(b'\n')
+
 def die(msg):
-    print >>sys.stderr, msg
+    print(msg, file=sys.stderr)
     sys.exit(1)
 
 def strip_uninteresting_patch_parts(lines):
     out = []
     state = 'head'
     for line in lines:
-        if line.startswith('diff --git'):
+        if line.startswith(b'diff --git'):
             state = 'diff'
-            out.append('\n')
+            out.append(b'\n')
             out.append(line)
         elif state == 'head':
-            if line.startswith('Author: '):
+            if line.startswith(b'Author: '):
                 out.append(line)
-                out.append('\n')
-            elif line.startswith('    '):
+                out.append(b'\n')
+            elif line.startswith(b'    '):
                 out.append(line)
         elif state == 'diff':
-            if line.startswith('index '):
+            if line.startswith(b'index '):
                 pass # skip
-            elif line.startswith('@@ '):
-                out.append('@@\n')
-            elif line == '\n':
+            elif line.startswith(b'@@ '):
+                out.append(b'@@\n')
+            elif line == b'\n':
                 # A completely blank (not ' \n', which is context)
                 # line is not valid in a diff.  We skip it silently,
                 # because this neatly handles the blank separator line
@@ -86,7 +90,7 @@ def read_patches(rev_list_args):
             diffs[sha1] = strip_uninteresting_patch_parts(data)
             del data[:]
     for line in p.stdout:
-        if line.startswith('commit '):
+        if line.startswith(b'commit '):
             handle_commit()
             _, sha1 = line.strip().split()
             continue
@@ -99,11 +103,11 @@ def read_patches(rev_list_args):
 def strip_to_diff_parts_1(lines):
     in_diff = False
     for line in lines:
-        if line.startswith('diff --git'):
+        if line.startswith(b'diff --git'):
             in_diff = True
         if not in_diff:
             continue
-        if line.startswith('@@ '):
+        if line.startswith(b'@@ '):
             continue
         yield line
 def strip_to_diff_parts(*args, **kwargs):
@@ -117,22 +121,22 @@ def diffsize(lA, lB):
         return len(strip_to_diff_parts(lA))
     lA = strip_to_diff_parts(lA)
     lB = strip_to_diff_parts(lB)
-    diff = difflib.unified_diff(lA, lB)
+    diff = difflib.diff_bytes(difflib.unified_diff, lA, lB)
     return len(list(diff))
 
 
 def commitinfo(sha1, fmt=None):
-    return subprocess.check_output(['git', 'log', '--no-color', '--no-walk', '--pretty=format:%h %s', sha1]).strip().split(' ', 1)
+    return subprocess.check_output(['git', 'log', '--no-color', '--no-walk', '--pretty=format:%h %s', sha1.decode('ascii')]).strip().split(b' ', 1)
 
 
 
-c_reset = ''
-c_commit = ''
-c_frag = ''
-c_old = ''
-c_new = ''
-c_inv_old = ''
-c_inv_new = ''
+c_reset = b''
+c_commit = b''
+c_frag = b''
+c_old = b''
+c_new = b''
+c_inv_old = b''
+c_inv_new = b''
 
 def get_color(varname, default):
     return subprocess.check_output(['git', 'config', '--get-color', varname, default])
@@ -141,11 +145,11 @@ def invert_ansi_color(color):
     # \e[7;...m chooses the inverse of \e[...m
     # we try to be nice and also support the reverse transformation
     # (from inverse to normal)
-    assert color[:2] == '\x1b['
-    i = color.find('7;')
+    assert color[:2] == b'\x1b['
+    i = color.find(b'7;')
     if i >= 0:
         return color[:i] + color[i+2:]
-    return '\x1b[7;' + color[2:]
+    return b'\x1b[7;' + color[2:]
 
 def load_colors():
     global c_reset, c_commit, c_frag, c_new, c_old, c_inv_old, c_inv_new
@@ -161,8 +165,8 @@ def commitinfo_maybe(cmt):
     if cmt:
         sha, subj = commitinfo(cmt)
     else:
-        sha = 7*'-'
-        subj = ''
+        sha = 7*b'-'
+        subj = b''
     return sha, subj
 
 def format_commit_line(i, left, j, right, has_diff=False):
@@ -171,50 +175,50 @@ def format_commit_line(i, left, j, right, has_diff=False):
     assert left or right
     if left and not right:
         color = c_old
-        status = '<'
+        status = b'<'
     elif right and not left:
         color = c_new
-        status = '>'
+        status = b'>'
     elif has_diff:
         color = c_commit
-        status = '!'
+        status = b'!'
     else:
         color = c_commit
-        status = '='
-    fmt = '%s' # color
+        status = b'='
+    fmt = b'%s' # color
     args = [color]
     # left coloring
-    if status == '!':
+    if status == b'!':
         fmt += c_reset + c_old
     # left num
     fmt += numfmt if left else numdash
     args += [i+1] if left else []
     # left hash
-    fmt += ": %8s"
+    fmt += b": %8s"
     args += [left_sha]
-    if status == '!':
+    if status == b'!':
         fmt += c_reset + color
     # middle char
-    fmt += " %s "
+    fmt += b" %s "
     args += [status]
     # right coloring
-    if status == '!':
+    if status == b'!':
         fmt += c_reset + c_new
     # right num
     fmt += numfmt if right else numdash
     args += [j+1] if right else []
     # right hash
-    fmt += ": %8s"
+    fmt += b": %8s"
     args += [right_sha]
-    if status == '!':
+    if status == b'!':
         fmt += c_reset + color
     # subject
-    fmt += " %s"
+    fmt += b" %s"
     args += [right_subj if right else left_subj]
     #
-    fmt += "%s"
+    fmt += b"%s"
     args += [c_reset]
-    print fmt % tuple(args)
+    raw_print(fmt % tuple(args))
 
 def compute_matching_assignment(sA, dA, sB, dB):
     la = len(sA)
@@ -265,7 +269,7 @@ def rebuild_match_list(eqlist, matchlist, imap):
     match_it = iter(matchlist)
     for i,eq in enumerate(eqlist):
         if eq is None:
-            matched = match_it.next()
+            matched = next(match_it)
             out.append(imap[matched])
         else:
             out.append(eq)
@@ -312,7 +316,7 @@ def compute_assignment(sA, dA, sB, dB):
         # now show an RHS commit
         process_lhs_orphans()
         if i < la:
-            idiff = list(difflib.unified_diff(dA[sA[i]], dB[u]))
+            idiff = list(difflib.diff_bytes(difflib.unified_diff, dA[sA[i]], dB[u]))
             pmap.append((i, j, idiff))
             lhs_prior_counter[i+1:] -= 1
         else:
@@ -323,44 +327,44 @@ def compute_assignment(sA, dA, sB, dB):
 
 def print_colored_interdiff(idiff):
     for line in idiff:
-        line = line.rstrip('\n')
+        line = line.rstrip(b'\n')
         if not line:
-            print
+            raw_print(b'')
             continue
         # Hunk headers in interdiff are always c_frag, and hunk
         # headers in the original patches are left uncolored (too
         # noisy).
-        if line.startswith('@@'):
-            print "    %s%s%s" % (c_frag, line, c_reset)
+        if line.startswith(b'@@'):
+            raw_print(b"    %s%s%s" % (c_frag, line, c_reset))
             continue
         # In traditional single-coloring mode, we color according to
         # the interdiff.
         if options.color == True:
-            color = ''
-            if line.startswith('-'):
+            color = b''
+            if line.startswith(b'-'):
                 color = c_old
-            elif line.startswith('+'):
+            elif line.startswith(b'+'):
                 color = c_new
-            print ''.join(["    ", color, line, c_reset])
+            raw_print(b''.join([b"    ", color, line, c_reset]))
             continue
         # In dual-color mode, we color the first column (changes
         # between patches) in reverse to highlight the interdiff, and
         # the rest of the line (the actual patches) normally to
         # highlight the diffs themselves.
-        lead, line = line[0], line[1:]
-        lead_color = ''
-        if lead == '+':
+        lead, line = line[:1], line[1:]
+        lead_color = b''
+        if lead == b'+':
             lead_color = c_inv_new
-        elif lead == '-':
+        elif lead == b'-':
             lead_color = c_inv_old
-        main_color = ''
-        if line.startswith('+'):
+        main_color = b''
+        if line.startswith(b'+'):
             main_color = c_new
-        elif line.startswith('-'):
+        elif line.startswith(b'-'):
             main_color = c_old
-        print ''.join(["    ",
+        raw_print(b''.join([b"    ",
                        lead_color, lead, c_reset,
-                       main_color, line, c_reset])
+                       main_color, line, c_reset]))
 
 def prettyprint_assignment(sA, dA, sB, dB):
     assignment = compute_assignment(sA, dA, sB, dB)
@@ -401,6 +405,6 @@ if __name__ == '__main__':
     la = len(sA)
     lb = len(sB)
     numwidth = max(len(str(la)), len(str(lb)))
-    numfmt = "%%%dd" % numwidth
-    numdash = numwidth*'-'
+    numfmt = b"%%%dd" % numwidth
+    numdash = numwidth*b'-'
     prettyprint_assignment(sA, dA, sB, dB)
