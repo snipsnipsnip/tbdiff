@@ -12,6 +12,9 @@ If your system does not yet have a `/usr/bin/python2` symlink (older
 systems would only have `/usr/bin/python`), you will need to edit the
 `#!` line.
 
+You also need to make sure that the `hungarian` Python module is
+available, e.g. by running `pip install hungarian`.
+
 Usage:
 
     git tbdiff A..B C..D
