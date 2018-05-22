@@ -18,7 +18,7 @@
 
 import os
 import sys
-import hungarian # https://pypi.python.org/pypi/hungarian
+import hungarian  # https://pypi.python.org/pypi/hungarian
 import tempfile
 import subprocess
 import difflib
@@ -37,13 +37,16 @@ parser.add_option('--creation-weight', action='store',
                   dest='creation_fudge', type=float, default=0.6,
                   help='Fudge factor by which creation is weighted [%default]')
 
+
 def raw_print(buf):
     sys.stdout.buffer.write(buf)
     sys.stdout.buffer.write(b'\n')
 
+
 def die(msg):
     print(msg, file=sys.stderr)
     sys.exit(1)
+
 
 def strip_uninteresting_patch_parts(lines):
     out = []
@@ -61,7 +64,7 @@ def strip_uninteresting_patch_parts(lines):
                 out.append(line)
         elif state == 'diff':
             if line.startswith(b'index '):
-                pass # skip
+                pass  # skip
             elif line.startswith(b'@@ '):
                 out.append(b'@@\n')
             elif line == b'\n':
@@ -75,6 +78,7 @@ def strip_uninteresting_patch_parts(lines):
             continue
     return out
 
+
 def read_patches(rev_list_args):
     series = []
     diffs = {}
@@ -85,6 +89,7 @@ def read_patches(rev_list_args):
                          stdout=subprocess.PIPE)
     sha1 = None
     data = []
+
     def handle_commit():
         if sha1 is not None:
             series.append(sha1)
@@ -111,6 +116,8 @@ def strip_to_diff_parts_1(lines):
         if line.startswith(b'@@ '):
             continue
         yield line
+
+
 def strip_to_diff_parts(*args, **kwargs):
     return list(strip_to_diff_parts_1(*args, **kwargs))
 
@@ -127,8 +134,8 @@ def diffsize(lA, lB):
 
 
 def commitinfo(sha1, fmt=None):
-    return subprocess.check_output(['git', 'log', '--no-color', '--no-walk', '--pretty=format:%h %s', sha1.decode('ascii')]).strip().split(b' ', 1)
-
+    return subprocess.check_output(['git', 'log', '--no-color', '--no-walk',
+                                    '--pretty=format:%h %s', sha1.decode('ascii')]).strip().split(b' ', 1)
 
 
 c_reset = b''
@@ -139,8 +146,11 @@ c_new = b''
 c_inv_old = b''
 c_inv_new = b''
 
+
 def get_color(varname, default):
-    return subprocess.check_output(['git', 'config', '--get-color', varname, default])
+    return subprocess.check_output(
+        ['git', 'config', '--get-color', varname, default])
+
 
 def invert_ansi_color(color):
     # \e[7;...m chooses the inverse of \e[...m
@@ -149,8 +159,9 @@ def invert_ansi_color(color):
     assert color[:2] == b'\x1b['
     i = color.find(b'7;')
     if i >= 0:
-        return color[:i] + color[i+2:]
+        return color[:i] + color[i + 2:]
     return b'\x1b[7;' + color[2:]
+
 
 def load_colors():
     global c_reset, c_commit, c_frag, c_new, c_old, c_inv_old, c_inv_new
@@ -162,13 +173,15 @@ def load_colors():
     c_inv_old = invert_ansi_color(c_old)
     c_inv_new = invert_ansi_color(c_new)
 
+
 def commitinfo_maybe(cmt):
     if cmt:
         sha, subj = commitinfo(cmt)
     else:
-        sha = 7*b'-'
+        sha = 7 * b'-'
         subj = b''
     return sha, subj
+
 
 def format_commit_line(i, left, j, right, has_diff=False):
     left_sha, left_subj = commitinfo_maybe(left)
@@ -186,14 +199,14 @@ def format_commit_line(i, left, j, right, has_diff=False):
     else:
         color = c_commit
         status = b'='
-    fmt = b'%s' # color
+    fmt = b'%s'  # color
     args = [color]
     # left coloring
     if status == b'!':
         fmt += c_reset + c_old
     # left num
     fmt += numfmt if left else numdash
-    args += [i+1] if left else []
+    args += [i + 1] if left else []
     # left hash
     fmt += b": %8s"
     args += [left_sha]
@@ -207,7 +220,7 @@ def format_commit_line(i, left, j, right, has_diff=False):
         fmt += c_reset + c_new
     # right num
     fmt += numfmt if right else numdash
-    args += [j+1] if right else []
+    args += [j + 1] if right else []
     # right hash
     fmt += b": %8s"
     args += [right_sha]
@@ -221,30 +234,32 @@ def format_commit_line(i, left, j, right, has_diff=False):
     args += [c_reset]
     raw_print(fmt % tuple(args))
 
+
 def compute_matching_assignment(sA, dA, sB, dB):
     la = len(sA)
     lb = len(sB)
-    dist = np.zeros((la+lb, la+lb), dtype=np.uint32)
-    for i,u in enumerate(sA):
-        for j,v in enumerate(sB):
-            dist[i,j] = diffsize(dA[u], dB[v])
+    dist = np.zeros((la + lb, la + lb), dtype=np.uint32)
+    for i, u in enumerate(sA):
+        for j, v in enumerate(sB):
+            dist[i, j] = diffsize(dA[u], dB[v])
     # print dist
-    for i,u in enumerate(sA):
-        for j in range(lb, lb+la):
-            dist[i,j] = options.creation_fudge*diffsize(dA[u], None)
-    for i in range(la, la+lb):
-        for j,v in enumerate(sB):
-            dist[i,j] = options.creation_fudge*diffsize(None, dB[v])
+    for i, u in enumerate(sA):
+        for j in range(lb, lb + la):
+            dist[i, j] = options.creation_fudge * diffsize(dA[u], None)
+    for i in range(la, la + lb):
+        for j, v in enumerate(sB):
+            dist[i, j] = options.creation_fudge * diffsize(None, dB[v])
     lhs, rhs = hungarian.lap(dist)
     return lhs, rhs
 
+
 def split_away_same_patches(sA, dA, sB, dB):
     patchesB = defaultdict(list)
-    for j,v in enumerate(sB):
+    for j, v in enumerate(sB):
         patchesB[tuple(dB[v])].append(j)
     eqA = []
     eqB = [None] * len(sB)
-    for i,u in enumerate(sA):
+    for i, u in enumerate(sA):
         patch = tuple(dA[u])
         try:
             j = patchesB[patch].pop(0)
@@ -255,20 +270,23 @@ def split_away_same_patches(sA, dA, sB, dB):
         eqB[j] = i
     return eqA, eqB
 
+
 def make_index_map(eqlist, othereqlist):
     imap = []
     mapped = 0
-    for orig,eq in enumerate(eqlist):
+    for orig, eq in enumerate(eqlist):
         if eq is None:
             imap.append(mapped)
         mapped += 1
-    imap.extend(range(mapped, mapped+sum(1 for x in othereqlist if x is None)))
+    imap.extend(range(mapped, mapped +
+                      sum(1 for x in othereqlist if x is None)))
     return imap
+
 
 def rebuild_match_list(eqlist, matchlist, imap):
     out = []
     match_it = iter(matchlist)
-    for i,eq in enumerate(eqlist):
+    for i, eq in enumerate(eqlist):
         if eq is None:
             matched = next(match_it)
             out.append(imap[matched])
@@ -277,6 +295,7 @@ def rebuild_match_list(eqlist, matchlist, imap):
     for i in match_it:
         out.append(imap[i])
     return out
+
 
 def compute_assignment(sA, dA, sB, dB):
     pmap = []
@@ -287,8 +306,8 @@ def compute_assignment(sA, dA, sB, dB):
     # give the other choices for this commit a very large weight).
     # This speeds up the case where the patches are the same.
     eqA, eqB = split_away_same_patches(sA, dA, sB, dB)
-    lhs1, rhs1 = compute_matching_assignment([u for u,e in zip(sA,eqA) if e is None], dA,
-                                             [v for v,e in zip(sB,eqB) if e is None], dB)
+    lhs1, rhs1 = compute_matching_assignment([u for u, e in zip(sA, eqA) if e is None], dA,
+                                             [v for v, e in zip(sB, eqB) if e is None], dB)
     imap = make_index_map(eqA, eqB)
     jmap = make_index_map(eqB, eqA)
     lhs = np.array(rebuild_match_list(eqA, lhs1, jmap))
@@ -311,20 +330,22 @@ def compute_assignment(sA, dA, sB, dB):
                 break
             pmap.append((idx[0], None, None))
             new_on_lhs[idx[0]] = False
-            lhs_prior_counter[idx[0]+1:] -= 1
+            lhs_prior_counter[idx[0] + 1:] -= 1
 
-    for j,(u,i) in enumerate(zip(sB, rhs)):
+    for j, (u, i) in enumerate(zip(sB, rhs)):
         # now show an RHS commit
         process_lhs_orphans()
         if i < la:
-            idiff = list(difflib.diff_bytes(difflib.unified_diff, dA[sA[i]], dB[u]))
+            idiff = list(difflib.diff_bytes(
+                difflib.unified_diff, dA[sA[i]], dB[u]))
             pmap.append((i, j, idiff))
-            lhs_prior_counter[i+1:] -= 1
+            lhs_prior_counter[i + 1:] -= 1
         else:
             pmap.append((None, j, None))
     process_lhs_orphans()
 
     return pmap
+
 
 def print_colored_interdiff(idiff):
     for line in idiff:
@@ -364,8 +385,9 @@ def print_colored_interdiff(idiff):
         elif line.startswith(b'-'):
             main_color = c_old
         raw_print(b''.join([b"    ",
-                       lead_color, lead, c_reset,
-                       main_color, line, c_reset]))
+                            lead_color, lead, c_reset,
+                            main_color, line, c_reset]))
+
 
 def prettyprint_assignment(sA, dA, sB, dB):
     assignment = compute_assignment(sA, dA, sB, dB)
@@ -379,7 +401,8 @@ def prettyprint_assignment(sA, dA, sB, dB):
         else:
             format_commit_line(i, sA[i], j, sB[j], has_diff=True)
             if options.patches:
-                print_colored_interdiff(idiff[2:]) # starts with --- and +++ lines
+                # starts with --- and +++ lines
+                print_colored_interdiff(idiff[2:])
 
 
 if __name__ == '__main__':
@@ -400,12 +423,12 @@ if __name__ == '__main__':
         die("usage: %(command)s A..B C..D\n"
             "   or: %(command)s A...B         # short for:  B..A A..B\n"
             "   or: %(command)s base A B      # short for:  base..A base..B" %
-            {'command' : sys.argv[0]})
+            {'command': sys.argv[0]})
     sA, dA = read_patches(rangeA)
     sB, dB = read_patches(rangeB)
     la = len(sA)
     lb = len(sB)
     numwidth = max(len(str(la)), len(str(lb)))
     numfmt = b"%%%dd" % numwidth
-    numdash = numwidth*b'-'
+    numdash = numwidth * b'-'
     prettyprint_assignment(sA, dA, sB, dB)
