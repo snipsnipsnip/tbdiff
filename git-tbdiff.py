@@ -25,6 +25,14 @@ import difflib
 import numpy as np
 import optparse
 from collections import defaultdict
+from typing import Iterable, List, Tuple, Dict, Union, Optional, IO, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    class _Options:
+        creation_fudge = float()
+        patches = bool()
+        color = bool() if 1 else int()
+    options = _Options()
 
 parser = optparse.OptionParser()
 parser.add_option('--color', default=True, action='store_true', dest='color')
@@ -38,17 +46,17 @@ parser.add_option('--creation-weight', action='store',
                   help='Fudge factor by which creation is weighted [%default]')
 
 
-def raw_print(buf):
+def raw_print(buf: bytes) -> None:
     sys.stdout.buffer.write(buf)
     sys.stdout.buffer.write(b'\n')
 
 
-def die(msg):
+def die(msg: str) -> None:
     print(msg, file=sys.stderr)
     sys.exit(1)
 
 
-def strip_uninteresting_patch_parts(lines):
+def strip_uninteresting_patch_parts(lines: Iterable[bytes]) -> List[bytes]:
     out = []
     state = 'head'
     for line in lines:
@@ -79,9 +87,10 @@ def strip_uninteresting_patch_parts(lines):
     return out
 
 
-def read_patches(rev_list_args):
-    series = []
-    diffs = {}
+def read_patches(
+        rev_list_args: List[str]) -> Tuple[List[bytes], Dict[bytes, List[bytes]]]:
+    series = []  # type: List[bytes]
+    diffs = {}  # type: Dict[bytes, List[bytes]]
     p = subprocess.Popen(['git', 'log', '--no-color', '-p', '--no-merges',
                           '--reverse', '--date-order',
                           '--decorate=no', '--no-abbrev-commit']
@@ -90,12 +99,13 @@ def read_patches(rev_list_args):
     sha1 = None
     data = []
 
-    def handle_commit():
+    def handle_commit() -> None:
         if sha1 is not None:
             series.append(sha1)
             diffs[sha1] = strip_uninteresting_patch_parts(data)
             del data[:]
-    for line in p.stdout:
+    pipe = p.stdout  # type: IO[bytes]
+    for line in pipe:
         if line.startswith(b'commit '):
             handle_commit()
             _, sha1 = line.strip().split()
@@ -106,7 +116,7 @@ def read_patches(rev_list_args):
     return series, diffs
 
 
-def strip_to_diff_parts_1(lines):
+def strip_to_diff_parts_1(lines: Iterable[bytes]) -> Iterable[bytes]:
     in_diff = False
     for line in lines:
         if line.startswith(b'diff --git'):
@@ -118,24 +128,29 @@ def strip_to_diff_parts_1(lines):
         yield line
 
 
-def strip_to_diff_parts(*args, **kwargs):
+def strip_to_diff_parts(
+        *args: Iterable[bytes], **kwargs: Iterable[bytes]) -> List[bytes]:
     return list(strip_to_diff_parts_1(*args, **kwargs))
 
 
-def diffsize(lA, lB):
-    if not lA:
+def diffsize(lA: Optional[List[bytes]], lB: Optional[List[bytes]]) -> int:
+    if not lA and lB:
         return len(strip_to_diff_parts(lB))
-    if not lB:
+    if not lB and lA:
         return len(strip_to_diff_parts(lA))
-    lA = strip_to_diff_parts(lA)
-    lB = strip_to_diff_parts(lB)
-    diff = difflib.diff_bytes(difflib.unified_diff, lA, lB)
-    return len(list(diff))
+    if lB and lA:
+        lA = strip_to_diff_parts(lA)
+        lB = strip_to_diff_parts(lB)
+        diff = difflib.diff_bytes(difflib.unified_diff, lA, lB)
+        return len(list(diff))
+    else:
+        raise ValueError()
 
 
-def commitinfo(sha1, fmt=None):
-    return subprocess.check_output(['git', 'log', '--no-color', '--no-walk',
-                                    '--pretty=format:%h %s', sha1.decode('ascii')]).strip().split(b' ', 1)
+def commitinfo(sha1: bytes) -> List[bytes]:
+    buf = subprocess.check_output(['git', 'log', '--no-color', '--no-walk',
+                                   '--pretty=format:%h %s', sha1.decode('ascii')])  # type: bytes
+    return buf.strip().split(b' ', 1)
 
 
 c_reset = b''
@@ -147,12 +162,13 @@ c_inv_old = b''
 c_inv_new = b''
 
 
-def get_color(varname, default):
-    return subprocess.check_output(
-        ['git', 'config', '--get-color', varname, default])
+def get_color(varname: str, default: str) -> bytes:
+    buf = subprocess.check_output(
+        ['git', 'config', '--get-color', varname, default])  # type: bytes
+    return buf
 
 
-def invert_ansi_color(color):
+def invert_ansi_color(color: bytes) -> bytes:
     # \e[7;...m chooses the inverse of \e[...m
     # we try to be nice and also support the reverse transformation
     # (from inverse to normal)
@@ -163,7 +179,7 @@ def invert_ansi_color(color):
     return b'\x1b[7;' + color[2:]
 
 
-def load_colors():
+def load_colors() -> None:
     global c_reset, c_commit, c_frag, c_new, c_old, c_inv_old, c_inv_new
     c_reset = get_color('', 'reset')
     c_commit = get_color('color.diff.commit', 'yellow dim')
@@ -174,7 +190,7 @@ def load_colors():
     c_inv_new = invert_ansi_color(c_new)
 
 
-def commitinfo_maybe(cmt):
+def commitinfo_maybe(cmt: Optional[bytes]) -> Tuple[bytes, bytes]:
     if cmt:
         sha, subj = commitinfo(cmt)
     else:
@@ -183,14 +199,19 @@ def commitinfo_maybe(cmt):
     return sha, subj
 
 
-def format_commit_line(i, left, j, right, has_diff=False):
-    left_sha, left_subj = commitinfo_maybe(left)
-    right_sha, right_subj = commitinfo_maybe(right)
-    assert left or right
-    if left and not right:
+def format_commit_line(left_pair: Optional[Tuple[int, bytes]],
+                       right_pair: Optional[Tuple[int, bytes]], has_diff: bool=False) -> None:
+    if left_pair:
+        i, left = left_pair
+    if right_pair:
+        j, right = right_pair
+    left_sha, left_subj = commitinfo_maybe(left_pair and left)
+    right_sha, right_subj = commitinfo_maybe(right_pair and right)
+    assert left_pair or right_pair
+    if left_pair and not right_pair:
         color = c_old
         status = b'<'
-    elif right and not left:
+    elif right_pair and not left_pair:
         color = c_new
         status = b'>'
     elif has_diff:
@@ -200,13 +221,13 @@ def format_commit_line(i, left, j, right, has_diff=False):
         color = c_commit
         status = b'='
     fmt = b'%s'  # color
-    args = [color]
+    args = [color]  # type: List[Union[bytes, int]]
     # left coloring
     if status == b'!':
         fmt += c_reset + c_old
     # left num
-    fmt += numfmt if left else numdash
-    args += [i + 1] if left else []
+    fmt += numfmt if left_pair else numdash
+    args += [i + 1] if left_pair else []
     # left hash
     fmt += b": %8s"
     args += [left_sha]
@@ -219,8 +240,8 @@ def format_commit_line(i, left, j, right, has_diff=False):
     if status == b'!':
         fmt += c_reset + c_new
     # right num
-    fmt += numfmt if right else numdash
-    args += [j + 1] if right else []
+    fmt += numfmt if right_pair else numdash
+    args += [j + 1] if right_pair else []
     # right hash
     fmt += b": %8s"
     args += [right_sha]
@@ -228,14 +249,16 @@ def format_commit_line(i, left, j, right, has_diff=False):
         fmt += c_reset + color
     # subject
     fmt += b" %s"
-    args += [right_subj if right else left_subj]
+    args += [right_subj if right_pair else left_subj]
     #
     fmt += b"%s"
     args += [c_reset]
-    raw_print(fmt % tuple(args))
+    fmtargs = tuple(args)  # type: Iterable[Union[bytes, int]]
+    raw_print(fmt % fmtargs)
 
 
-def compute_matching_assignment(sA, dA, sB, dB):
+def compute_matching_assignment(sA: List[bytes], dA: Dict[bytes, List[bytes]],
+                                sB: List[bytes], dB: Dict[bytes, List[bytes]]) -> Tuple[List[int], List[int]]:
     la = len(sA)
     lb = len(sB)
     dist = np.zeros((la + lb, la + lb), dtype=np.uint32)
@@ -245,20 +268,21 @@ def compute_matching_assignment(sA, dA, sB, dB):
     # print dist
     for i, u in enumerate(sA):
         for j in range(lb, lb + la):
-            dist[i, j] = options.creation_fudge * diffsize(dA[u], None)
+            dist[i, j] = int(options.creation_fudge * diffsize(dA[u], None))
     for i in range(la, la + lb):
         for j, v in enumerate(sB):
-            dist[i, j] = options.creation_fudge * diffsize(None, dB[v])
+            dist[i, j] = int(options.creation_fudge * diffsize(None, dB[v]))
     lhs, rhs = hungarian.lap(dist)
     return lhs, rhs
 
 
-def split_away_same_patches(sA, dA, sB, dB):
-    patchesB = defaultdict(list)
+def split_away_same_patches(sA: List[bytes], dA: Dict[bytes, List[bytes]], sB: List[bytes],
+                            dB: Dict[bytes, List[bytes]]) -> Tuple[List[Optional[int]], List[Optional[int]]]:
+    patchesB = defaultdict(list)  # type: Dict[Iterable[bytes], List[int]]
     for j, v in enumerate(sB):
         patchesB[tuple(dB[v])].append(j)
-    eqA = []
-    eqB = [None] * len(sB)
+    eqA = []  # type: List[Optional[int]]
+    eqB = [None] * len(sB)  # type: List[Optional[int]]
     for i, u in enumerate(sA):
         patch = tuple(dA[u])
         try:
@@ -271,10 +295,11 @@ def split_away_same_patches(sA, dA, sB, dB):
     return eqA, eqB
 
 
-def make_index_map(eqlist, othereqlist):
+def make_index_map(eqlist: List[Optional[int]],
+                   othereqlist: List[Optional[int]]) -> List[int]:
     imap = []
     mapped = 0
-    for orig, eq in enumerate(eqlist):
+    for _, eq in enumerate(eqlist):
         if eq is None:
             imap.append(mapped)
         mapped += 1
@@ -283,7 +308,8 @@ def make_index_map(eqlist, othereqlist):
     return imap
 
 
-def rebuild_match_list(eqlist, matchlist, imap):
+def rebuild_match_list(
+        eqlist: List[Optional[int]], matchlist: List[int], imap: List[int]) -> List[int]:
     out = []
     match_it = iter(matchlist)
     for i, eq in enumerate(eqlist):
@@ -297,8 +323,9 @@ def rebuild_match_list(eqlist, matchlist, imap):
     return out
 
 
-def compute_assignment(sA, dA, sB, dB):
-    pmap = []
+def compute_assignment(sA: List[bytes], dA: Dict[bytes, List[bytes]], sB: List[bytes], dB: Dict[bytes, List[bytes]]
+                       ) -> List[Union[Tuple[int, None, None], Tuple[None, int, None], Tuple[int, int, List[bytes]]]]:
+    pmap = []  # type: List[Union[Tuple[int, None, None], Tuple[None, int, None], Tuple[int, int, List[bytes]]]]
     la = len(sA)
     lb = len(sB)
 
@@ -321,7 +348,7 @@ def compute_assignment(sA, dA, sB, dB):
     new_on_lhs = (lhs >= lb)[:la]
     lhs_prior_counter = np.arange(la)
 
-    def process_lhs_orphans():
+    def process_lhs_orphans() -> None:
         while True:
             assert (lhs_prior_counter >= 0).all()
             w = (lhs_prior_counter == 0) & new_on_lhs
@@ -347,7 +374,7 @@ def compute_assignment(sA, dA, sB, dB):
     return pmap
 
 
-def print_colored_interdiff(idiff):
+def print_colored_interdiff(idiff: List[bytes]) -> None:
     for line in idiff:
         line = line.rstrip(b'\n')
         if not line:
@@ -389,24 +416,27 @@ def print_colored_interdiff(idiff):
                             main_color, line, c_reset]))
 
 
-def prettyprint_assignment(sA, dA, sB, dB):
+def prettyprint_assignment(sA: List[bytes], dA: Dict[bytes, List[bytes]],
+                           sB: List[bytes], dB: Dict[bytes, List[bytes]]) -> None:
     assignment = compute_assignment(sA, dA, sB, dB)
     for i, j, idiff in assignment:
-        if j is None:
-            format_commit_line(i, sA[i], None, None)
-        elif i is None:
-            format_commit_line(None, None, j, sB[j])
-        elif len(idiff) == 0:
-            format_commit_line(i, sA[i], j, sB[j], has_diff=False)
-        else:
-            format_commit_line(i, sA[i], j, sB[j], has_diff=True)
+        if j is None and i is not None:
+            format_commit_line((i, sA[i]), None)
+        elif i is None and j is not None:
+            format_commit_line(None, (j, sB[j]))
+        elif i is not None and j is not None and idiff is not None and len(idiff) == 0:
+            format_commit_line((i, sA[i]), (j, sB[j]), has_diff=False)
+        elif i is not None and j is not None and idiff is not None:
+            format_commit_line((i, sA[i]), (j, sB[j]), has_diff=True)
             if options.patches:
                 # starts with --- and +++ lines
                 print_colored_interdiff(idiff[2:])
+        else:
+            assert False
 
 
 if __name__ == '__main__':
-    options, args = parser.parse_args()
+    options, args = cast(Tuple[_Options, List[str]], parser.parse_args())
     if options.color:
         load_colors()
     if len(args) == 2 and '..' in args[0] and '..' in args[1]:
